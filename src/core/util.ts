@@ -28,10 +28,11 @@ export async function writeAtomic(path: string, data: string): Promise<void> {
   await fsp.rename(tmp, path);
 }
 
-export function writeAtomicSync(path: string, data: string): void {
+/** `mode` applies on POSIX only (e.g. 0o600 for files holding secrets). */
+export function writeAtomicSync(path: string, data: string, mode?: number): void {
   mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync(tmp, data, 'utf8');
+  const tmp = `${path}.${process.pid}.${randomBytes(3).toString('hex')}.tmp`;
+  writeFileSync(tmp, data, { encoding: 'utf8', ...(mode !== undefined ? { mode } : {}) });
   renameSync(tmp, path);
 }
 

@@ -1,0 +1,9 @@
+# NNN — <Feature name>: tasks
+
+Ordered. Each task names the requirement it satisfies. Tick in the same commit as the code.
+
+- [ ] T1 (FR-1) …
+- [ ] T2 (FR-1) test: …
+- [ ] T3 (SR-1) eval cases: …
+- [ ] T4 docs: README / SECURITY.md / BENCHMARKS.md updated
+- [ ] T5 `npm run check` green on macOS, Windows, Linux (CI)

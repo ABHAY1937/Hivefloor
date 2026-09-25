@@ -12,7 +12,9 @@ It's inspired by [munder-difflin](https://github.com/chaitanyagiri/munder-diffli
 npm install            # node-pty ships N-API prebuilds for macOS/Windows; Linux compiles it (needs make/g++/python3)
 npm run dev            # launch the app (hot reload)
 npm run demo:headless  # or: run the whole office in your terminal, no Electron
-npm test               # 14 tests: core + real-PTY end-to-end
+npm test               # 20 tests: core, security, real-PTY end-to-end
+npm run eval           # score the approval classifier on a labelled set
+npm run check          # typecheck + tests + evals + dependency audit (the CI gate)
 npm run bench          # compare against the reference harness design
 npm run dist:mac | dist:win | dist:linux   # installers via electron-builder
 ```
@@ -78,6 +80,14 @@ hive route "<task>"                     hive board [--append "..."]
 ```
 
 Claude Code also gets a `Stop` hook (`hive hook stop`) that keeps it working while it has unread mail. Other CLIs get a short nudge typed into their terminal when mail arrives, but only when they're idle and at most once every 15 s.
+
+## Security
+
+See [SECURITY.md](./SECURITY.md) for the security model, known limitations and how to report a vulnerability.
+
+## Development process
+
+Features are built spec-first: see [specs/README.md](./specs/README.md) and the [constitution](./specs/constitution.md).
 
 ## Data
 

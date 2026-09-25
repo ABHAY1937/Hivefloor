@@ -18,3 +18,12 @@ win:
 linux:
   target: [AppImage, deb]
   category: Development
+# Electron fuses, flipped in the binary at package time. runAsNode must stay on:
+# agents (sim/llm/hive CLI) run via ELECTRON_RUN_AS_NODE with the bundled runtime.
+electronFuses:
+  runAsNode: true
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true

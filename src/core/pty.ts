@@ -14,6 +14,8 @@
 // still works (without full TTY semantics).
 
 import { spawn as cpSpawn, type ChildProcess } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { delimiter, join } from 'node:path';
 import { Bus } from './bus';
 
 export interface PtySpawnOptions {
@@ -131,7 +133,7 @@ export class PtyManager {
     if (this.sessions.has(o.id)) throw new Error(`session ${o.id} already running`);
     const np = loadNodePty();
     const proc: IPty = np
-      ? np.spawn(o.command, o.args, {
+      ? np.spawn(resolveCommand(o.command, o.env), o.args, {
           name: 'xterm-256color',
           cols: o.cols ?? 120,
           rows: o.rows ?? 32,
@@ -279,6 +281,25 @@ export class PtyManager {
       }
     }
   }
+}
+
+/**
+ * ConPTY does not search PATH/PATHEXT the way a shell does, so on Windows a bare
+ * name like `bash` or `claude` (really `claude.cmd`) fails with "File not found".
+ * Resolve it against the agent's own PATH first.
+ */
+export function resolveCommand(command: string, env: Record<string, string>): string {
+  if (process.platform !== 'win32' || /[\\/]/.test(command)) return command;
+  const pathVar = env.PATH ?? env.Path ?? process.env.PATH ?? '';
+  const exts = (env.PATHEXT ?? process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean);
+  const hasExt = /\.[a-z0-9]+$/i.test(command);
+  for (const dir of pathVar.split(delimiter).filter(Boolean)) {
+    for (const ext of hasExt ? [''] : exts) {
+      const full = join(dir, command + ext);
+      if (existsSync(full)) return full;
+    }
+  }
+  return command;
 }
 
 /** Fallback when node-pty can't load: plain pipes wrapped in the IPty shape. */

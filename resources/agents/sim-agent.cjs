@@ -200,7 +200,7 @@ async function workerHandle(m) {
   if (risky.needsApproval) {
     say(`${C.y}⚠ This needs human approval (${risky.kind}: ${risky.reason}).${C.r}`);
     tool('hive ask', `${risky.kind} ${JSON.stringify(title.slice(0, 40))} --wait`);
-    await rpc('status', { status: 'waiting', note: `approval: ${title.slice(0, 60)}` });
+    // No explicit 'waiting' status: the harness sets it as soon as the approval is filed.
     const a = await rpc('ask', { kind: risky.kind, summary: title, detail: `Requested by ${m.from} in ${taskId || 'a message'}`, waitMs: 600000 });
     if (a.status !== 'approved') {
       say(`${C.red}✗ Not approved — skipping.${C.r}`);

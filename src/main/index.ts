@@ -8,7 +8,7 @@
 //    ("watched"); unwatched sessions are auto-acked in main and replayed from
 //    the ring buffer when opened. 20 agents cost the same IPC as 1 visible one.
 
-import { app, BrowserWindow, ipcMain, safeStorage, shell, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, safeStorage, dialog } from 'electron';
 import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -44,10 +44,76 @@ function loadSettings(): Settings {
   }
 }
 function saveSettings(s: Settings): void {
-  writeAtomicSync(SETTINGS_PATH, JSON.stringify(s, null, 2));
+  // Owner-only: this file holds (encrypted, or on keychain-less Linux, raw) API keys.
+  writeAtomicSync(SETTINGS_PATH, JSON.stringify(s, null, 2), 0o600);
 }
+let warnedPlaintext = false;
 function encrypt(v: string): string {
-  return safeStorage.isEncryptionAvailable() ? `enc:${safeStorage.encryptString(v).toString('base64')}` : `raw:${v}`;
+  if (safeStorage.isEncryptionAvailable()) return `enc:${safeStorage.encryptString(v).toString('base64')}`;
+  if (!warnedPlaintext) {
+    warnedPlaintext = true;
+    console.warn('[settings] OS keychain unavailable: API keys are stored unencrypted in settings.json (mode 0600)');
+  }
+  return `raw:${v}`;
+}
+
+// ─── renderer input validation ──────────────────────────────────────────────
+// The renderer is our own UI, but treat it as untrusted: an XSS there must not
+// turn into arbitrary command execution or file access in the main process.
+
+const str = (v: unknown, name: string, max = 2000): string => {
+  if (typeof v !== 'string' || v.length > max) throw new Error(`${name} must be a string (≤${max} chars)`);
+  return v;
+};
+const strList = (v: unknown, name: string): string[] => {
+  if (!Array.isArray(v) || v.length > 100) throw new Error(`${name} must be a list`);
+  return v.map((x, i) => str(x, `${name}[${i}]`, 500));
+};
+const AGENT_FIELDS: Record<string, (v: unknown) => unknown> = {
+  name: (v) => str(v, 'name', 80),
+  role: (v) => str(v, 'role', 200),
+  skills: (v) => strList(v, 'skills'),
+  provider: (v) => str(v, 'provider', 40),
+  model: (v) => (v === undefined ? undefined : str(v, 'model', 200)),
+  cwd: (v) => str(v, 'cwd', 1000),
+  isolation: (v) => {
+    if (v !== 'shared' && v !== 'worktree') throw new Error('isolation must be shared|worktree');
+    return v;
+  },
+  command: (v) => (v === undefined ? undefined : str(v, 'command', 1000)),
+  args: (v) => (v === undefined ? undefined : strList(v, 'args'))
+};
+function cleanAgentPatch(patch: unknown): Record<string, unknown> {
+  if (!patch || typeof patch !== 'object') throw new Error('patch must be an object');
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(patch)) {
+    const check = Object.hasOwn(AGENT_FIELDS, k) ? AGENT_FIELDS[k] : undefined;
+    if (!check) throw new Error(`field "${k}" cannot be changed`);
+    out[k] = check(v);
+  }
+  return out;
+}
+function cleanLlm(v: unknown): Settings['llm'] {
+  const o = (v ?? {}) as Record<string, unknown>;
+  const baseUrl = str(o.baseUrl, 'baseUrl', 500);
+  const u = new URL(baseUrl);
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error('baseUrl must be http(s)');
+  if (o.api !== 'openai' && o.api !== 'anthropic') throw new Error('api must be openai|anthropic');
+  return { baseUrl, model: str(o.model, 'model', 200), api: o.api };
+}
+function cleanPolicy(v: unknown): Partial<PolicyConfig> {
+  const o = (v ?? {}) as Record<string, unknown>;
+  const out: Partial<PolicyConfig> = {};
+  const num = (x: unknown, name: string) => {
+    const n = Number(x);
+    if (!Number.isFinite(n) || n < 0) throw new Error(`${name} must be a non-negative number`);
+    return n;
+  };
+  if (o.bigChangeFiles !== undefined) out.bigChangeFiles = Math.max(1, num(o.bigChangeFiles, 'bigChangeFiles'));
+  if (o.spendThresholdUsd !== undefined) out.spendThresholdUsd = num(o.spendThresholdUsd, 'spendThresholdUsd');
+  if (o.alwaysAsk !== undefined) out.alwaysAsk = strList(o.alwaysAsk, 'alwaysAsk');
+  if (o.neverAsk !== undefined) out.neverAsk = strList(o.neverAsk, 'neverAsk');
+  return out;
 }
 function decrypt(v: string): string {
   if (v.startsWith('enc:')) return safeStorage.decryptString(Buffer.from(v.slice(4), 'base64'));
@@ -98,7 +164,7 @@ function scheduleFlush(): void {
 }
 
 async function boot(): Promise<void> {
-  mkdirSync(HOME, { recursive: true });
+  mkdirSync(HOME, { recursive: true, mode: 0o700 });
   settings = loadSettings();
   harness = new Harness({
     home: HOME,
@@ -159,8 +225,11 @@ const api: Record<string, (...args: never[]) => unknown> = {
     settings: { ...settings, secrets: Object.keys(settings.secrets) },
     seq: harness.hive.snapshot().seq
   }),
-  hire: (input: Parameters<Harness['hire']>[0]) => {
-    const spec = harness.hire({ cwd: settings.workspace, ...input });
+  hire: (raw: Record<string, unknown>) => {
+    const { isBoss, ...rest } = (raw ?? {}) as Record<string, unknown>;
+    const input = cleanAgentPatch(rest) as Parameters<Harness['hire']>[0];
+    if (!input.name || !input.role || !input.provider) throw new Error('name, role and provider are required');
+    const spec = harness.hire({ cwd: settings.workspace, ...input, isBoss: isBoss === true });
     void harness.startAgent(spec.id);
     return spec;
   },
@@ -168,7 +237,7 @@ const api: Record<string, (...args: never[]) => unknown> = {
   start: (id: string) => harness.startAgent(id),
   stop: (id: string) => harness.stopAgent(id),
   restart: (id: string) => harness.restartAgent(id),
-  updateAgent: (id: string, patch: Record<string, unknown>) => harness.hive.updateAgent(id, patch),
+  updateAgent: (id: string, patch: Record<string, unknown>) => harness.hive.updateAgent(str(id, 'id', 64), cleanAgentPatch(patch)),
   tellBoss: (text: string) => harness.tellBoss(text),
   sendAsHuman: (to: string, subject: string, body: string) => harness.hive.send({ from: 'human', to, subject, body }),
   input: (id: string, data: string) => harness.input(id, data),
@@ -187,16 +256,22 @@ const api: Record<string, (...args: never[]) => unknown> = {
   setBoard: (text: string) => harness.hive.setBoard(text, 'human'),
   route: (task: string) => harness.route(task),
   stats: () => ({ pty: harness.pty.stats(), rpcRequests: harness.server.requests, watched: [...watched] }),
-  saveSettings: (patch: { llm?: Settings['llm']; policy?: Partial<PolicyConfig>; workspace?: string; secrets?: Record<string, string | null> }) => {
-    if (patch.llm) settings.llm = patch.llm;
-    if (patch.workspace) settings.workspace = patch.workspace;
+  saveSettings: (patch: { llm?: unknown; policy?: unknown; workspace?: unknown; secrets?: Record<string, unknown> }) => {
+    if (patch.llm) settings.llm = cleanLlm(patch.llm);
+    if (patch.workspace) settings.workspace = str(patch.workspace, 'workspace', 1000);
     if (patch.policy) {
-      settings.policy = { ...settings.policy, ...patch.policy };
+      settings.policy = { ...settings.policy, ...cleanPolicy(patch.policy) };
       harness.hive.policy.update(settings.policy);
     }
     if (patch.secrets) {
       for (const [k, v] of Object.entries(patch.secrets)) {
+        // Secrets become env vars in agent processes: keep names env-safe and never
+        // let them override the harness's own variables or the loader (NODE_OPTIONS…).
+        if (!/^[A-Z_][A-Z0-9_]{0,63}$/.test(k) || /^(HIVE_(URL|TOKEN|AGENT|HOME|AGENT_DIR)|PATH|NODE_OPTIONS|ELECTRON_\w+|LD_\w+|DYLD_\w+)$/.test(k)) {
+          throw new Error(`"${k}" is not an allowed secret name`);
+        }
         if (v === null || v === '') delete settings.secrets[k];
+        else if (typeof v !== 'string' || v.length > 10_000) throw new Error(`secret ${k} must be a string`);
         else settings.secrets[k] = encrypt(v);
       }
     }
@@ -209,14 +284,21 @@ const api: Record<string, (...args: never[]) => unknown> = {
   pickFolder: async () => {
     const r = await dialog.showOpenDialog(win!, { properties: ['openDirectory', 'createDirectory'] });
     return r.canceled ? null : r.filePaths[0];
-  },
-  openPath: (p: string) => shell.openPath(p)
+  }
 };
 
-ipcMain.handle('hf:call', async (_e, method: string, args: unknown[]) => {
-  const fn = api[method];
-  if (!fn) throw new Error(`unknown method ${method}`);
-  return (fn as (...a: unknown[]) => unknown)(...(args ?? []));
+/** Only our own top-level window may call the API (not iframes or navigated-away pages). */
+function trustedSender(e: Electron.IpcMainInvokeEvent): boolean {
+  if (!win || e.sender !== win.webContents || e.senderFrame !== win.webContents.mainFrame) return false;
+  const url = e.senderFrame?.url ?? '';
+  const dev = process.env.ELECTRON_RENDERER_URL;
+  return dev && !app.isPackaged ? url.startsWith(dev) : url.startsWith('file://');
+}
+
+ipcMain.handle('hf:call', async (e, method: unknown, args: unknown) => {
+  if (!trustedSender(e)) throw new Error('untrusted sender');
+  if (typeof method !== 'string' || !Object.hasOwn(api, method)) throw new Error(`unknown method ${String(method)}`);
+  return (api[method] as (...a: unknown[]) => unknown)(...(Array.isArray(args) ? args : []));
 });
 
 function createWindow(): void {
@@ -231,11 +313,19 @@ function createWindow(): void {
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
-      sandbox: false,
+      sandbox: true,
       nodeIntegration: false,
+      webSecurity: true,
       backgroundThrottling: true
     }
   });
+  // The UI never navigates or opens windows; block both so injected content can't
+  // load a remote page that would then inherit the preload bridge.
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('will-navigate', (e, url) => {
+    if (url !== win?.webContents.getURL()) e.preventDefault();
+  });
+  win.webContents.session.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
   win.once('ready-to-show', () => win?.show());
   win.on('closed', () => {
     win = null;
