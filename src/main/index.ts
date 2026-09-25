@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { Harness } from '../core/harness';
 import type { LiveSignal, SequencedEvent } from '../core/types';
 import type { PolicyConfig } from '../core/policy';
+import { validImage } from '../core/sandbox';
 import { writeAtomicSync } from '../core/util';
 
 interface Settings {
@@ -69,6 +70,7 @@ const strList = (v: unknown, name: string): string[] => {
   if (!Array.isArray(v) || v.length > 100) throw new Error(`${name} must be a list`);
   return v.map((x, i) => str(x, `${name}[${i}]`, 500));
 };
+const SECRET_NAME = /^[A-Z_][A-Z0-9_]{0,63}$/;
 const AGENT_FIELDS: Record<string, (v: unknown) => unknown> = {
   name: (v) => str(v, 'name', 80),
   role: (v) => str(v, 'role', 200),
@@ -81,7 +83,22 @@ const AGENT_FIELDS: Record<string, (v: unknown) => unknown> = {
     return v;
   },
   command: (v) => (v === undefined ? undefined : str(v, 'command', 1000)),
-  args: (v) => (v === undefined ? undefined : strList(v, 'args'))
+  args: (v) => (v === undefined ? undefined : strList(v, 'args')),
+  sandbox: (v) => {
+    if (v !== 'none' && v !== 'docker') throw new Error('sandbox must be none|docker');
+    return v;
+  },
+  sandboxImage: (v) => {
+    if (v === undefined || v === '') return undefined;
+    // Validated so an image name can't smuggle docker flags such as --privileged.
+    if (typeof v !== 'string' || !validImage(v)) throw new Error('sandboxImage is not a valid image name');
+    return v;
+  },
+  secrets: (v) => {
+    const names = strList(v, 'secrets');
+    for (const n of names) if (!SECRET_NAME.test(n)) throw new Error(`"${n}" is not a valid key name`);
+    return names;
+  }
 };
 function cleanAgentPatch(patch: unknown): Record<string, unknown> {
   if (!patch || typeof patch !== 'object') throw new Error('patch must be an object');
@@ -267,7 +284,7 @@ const api: Record<string, (...args: never[]) => unknown> = {
       for (const [k, v] of Object.entries(patch.secrets)) {
         // Secrets become env vars in agent processes: keep names env-safe and never
         // let them override the harness's own variables or the loader (NODE_OPTIONS…).
-        if (!/^[A-Z_][A-Z0-9_]{0,63}$/.test(k) || /^(HIVE_(URL|TOKEN|AGENT|HOME|AGENT_DIR)|PATH|NODE_OPTIONS|ELECTRON_\w+|LD_\w+|DYLD_\w+)$/.test(k)) {
+        if (!SECRET_NAME.test(k) || /^(HIVE_(URL|TOKEN|AGENT|HOME|AGENT_DIR)|PATH|NODE_OPTIONS|ELECTRON_\w+|LD_\w+|DYLD_\w+)$/.test(k)) {
           throw new Error(`"${k}" is not an allowed secret name`);
         }
         if (v === null || v === '') delete settings.secrets[k];

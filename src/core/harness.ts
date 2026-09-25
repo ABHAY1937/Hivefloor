@@ -8,10 +8,23 @@ import { existsSync, mkdirSync, writeFileSync, chmodSync } from 'node:fs';
 import { join, delimiter } from 'node:path';
 import { promisify } from 'node:util';
 import { Bus } from './bus';
+import { buildAgentEnv, looksLikeCredential } from './env';
 import { Hive } from './hive';
 import { MemoryIndex } from './memory';
-import { getProvider, PROVIDERS, renderIdentity } from './providers';
+import { getProvider, PROVIDERS, renderIdentity, type ProviderDef } from './providers';
 import { PtyManager, type PtyBatchItem } from './pty';
+import {
+  C as SANDBOX,
+  DEFAULT_SANDBOX_IMAGE,
+  bridgeGateway,
+  buildDockerLaunch,
+  dockerAvailable,
+  ensureImage,
+  homeLabel,
+  hostUrl,
+  removeContainers,
+  writeContainerShim
+} from './sandbox';
 import { ControlServer } from './server';
 import {
   HUMAN,
@@ -42,6 +55,8 @@ export interface HarnessOptions {
   /** Extra env (API keys) injected into every agent. Never persisted in the hive. */
   secrets?: Record<string, string>;
   llm?: { baseUrl?: string; apiKey?: string; model?: string; api?: string };
+  /** Folder with the default sandbox Dockerfile (default: <agentsDir>/../sandbox). */
+  sandboxDir?: string;
   /** Speed multiplier for the sim agent (demo). */
   simSpeed?: number;
   pty?: ConstructorParameters<typeof PtyManager>[0];
@@ -75,6 +90,8 @@ export class Harness {
   private lastNudge = new Map<string, number>();
   private nudgeTimers = new Map<string, NodeJS.Timeout>();
   private tokens = new Map<string, string>();
+  /** agent id -> running container name (sandboxed agents). */
+  private containers = new Map<string, string>();
   private readonly binDir: string;
   private readonly nodeBin: string;
 
@@ -103,15 +120,24 @@ export class Harness {
     this.pty.bus.on('activity', ({ id, active }) => this.onActivity(id, active));
     this.pty.bus.on('exit', ({ id, exitCode }) => {
       this.server.revokeAgent(id);
+      const container = this.containers.get(id);
+      if (container) {
+        this.containers.delete(id);
+        void removeContainers({ name: container });
+      }
       this.setState(id, { status: exitCode === 0 ? 'offline' : 'error', station: 'desk', note: `exited (${exitCode})`, exitCode, pid: undefined });
       this.hive.releaseLeases(id);
       this.bus.emit('exit', { id, exitCode });
     });
     for (const a of this.hive.listAgents()) this.states.set(a.id, this.freshState());
+    // Containers left behind by a crash of a previous run (SR-5).
+    if (this.hive.listAgents().some((a) => a.sandbox === 'docker')) void removeContainers({ label: `dev.hivefloor.home=${homeLabel(this.opts.home)}` });
   }
 
   async stop(): Promise<void> {
     this.pty.killAll();
+    await Promise.all([...this.containers.values()].map((name) => removeContainers({ name })));
+    this.containers.clear();
     for (const t of this.nudgeTimers.values()) clearTimeout(t);
     await this.server.close();
     await this.hive.close();
@@ -151,6 +177,9 @@ export class Harness {
     isBoss?: boolean;
     command?: string;
     args?: string[];
+    secrets?: string[];
+    sandbox?: 'none' | 'docker';
+    sandboxImage?: string;
   }): AgentSpec {
     getProvider(input.provider);
     let id = slug(input.name);
@@ -169,6 +198,8 @@ export class Harness {
       avatar: LOOKS[n % LOOKS.length],
       command: input.command,
       args: input.args,
+      ...(input.secrets?.length ? { secrets: input.secrets } : {}),
+      ...(input.sandbox === 'docker' ? { sandbox: 'docker' as const, ...(input.sandboxImage ? { sandboxImage: input.sandboxImage } : {}) } : {}),
       createdAt: Date.now()
     };
     this.hive.addAgent(spec);
@@ -208,9 +239,22 @@ export class Harness {
     if (this.pty.has(id)) return;
     const provider = getProvider(spec.provider);
     this.setState(id, { status: 'starting', note: 'booting up…', exitCode: undefined });
+    try {
+      await this.launchAgent(spec, provider, size);
+    } catch (e) {
+      // Surface the reason on the avatar instead of leaving it "starting" forever.
+      this.server.revokeAgent(id);
+      this.setState(id, { status: 'error', note: clip((e as Error).message, 160) });
+      throw e;
+    }
+  }
 
+  private async launchAgent(spec: AgentSpec, provider: ProviderDef, size?: { cols: number; rows: number }): Promise<void> {
+    const id = spec.id;
+    const sandboxed = spec.sandbox === 'docker';
     mkdirSync(spec.cwd, { recursive: true });
     const workdir = spec.isolation === 'worktree' ? await this.ensureWorktree(spec) : spec.cwd;
+    if (sandboxed) await this.prepareSandbox(spec);
     const dir = this.hive.agentDir(id);
     mkdirSync(dir, { recursive: true });
     const prompt = renderIdentity(spec, this.hive.listAgents());
@@ -219,7 +263,11 @@ export class Harness {
     let settingsFile: string | undefined;
     if (provider.stopHook) {
       settingsFile = join(dir, 'claude-settings.json');
-      const hook = process.platform === 'win32' ? `"${join(this.binDir, 'hive.cmd')}" hook stop` : `"${join(this.binDir, 'hive')}" hook stop`;
+      const hook = sandboxed
+        ? `${SANDBOX.bin}/hive hook stop`
+        : process.platform === 'win32'
+          ? `"${join(this.binDir, 'hive.cmd')}" hook stop`
+          : `"${join(this.binDir, 'hive')}" hook stop`;
       writeFileSync(settingsFile, JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: hook }] }] } }, null, 2));
     }
     const token = randomBytes(24).toString('hex');
@@ -229,35 +277,115 @@ export class Harness {
     const kickoff = spec.isBoss
       ? 'You are now on shift as the boss. Run `hive recall "project"` and `hive inbox`, then wait for the human\'s requests.'
       : 'You are now on shift. Run `hive recall "project"` and `hive inbox` and handle anything waiting. Then wait for tasks.';
-    const launch = provider.build({
-      spec,
-      prompt,
-      kickoff,
-      identityFile,
-      agentsDir: this.opts.agentsDir,
-      settingsFile,
-      node: this.nodeBin,
-      llm: this.opts.llm ?? {}
-    });
-    const env: Record<string, string> = {
-      ...(process.env as Record<string, string>),
-      ...(this.opts.secrets ?? {}),
-      ...(launch.env ?? {}),
-      TERM: 'xterm-256color',
-      COLORTERM: 'truecolor',
-      FORCE_COLOR: '1',
-      HIVE_URL: this.server.url,
-      HIVE_TOKEN: token,
-      HIVE_AGENT: id,
-      HIVE_HOME: this.hive.root,
-      HIVE_AGENT_DIR: dir,
-      HIVE_SIM_SPEED: String(this.opts.simSpeed ?? 1),
-      PATH: `${this.binDir}${delimiter}${process.env.PATH ?? ''}`
-    };
-    if (this.opts.runAsNode && launch.command === this.nodeBin) env.ELECTRON_RUN_AS_NODE = '1';
+    const llm = this.opts.llm ?? {};
+    const launch = provider.build(
+      sandboxed
+        ? {
+            spec,
+            prompt,
+            kickoff,
+            identityFile: `${SANDBOX.agent}/identity.md`,
+            agentsDir: SANDBOX.agents,
+            settingsFile: settingsFile && `${SANDBOX.agent}/claude-settings.json`,
+            node: 'node',
+            llm: { ...llm, baseUrl: llm.baseUrl && hostUrl(llm.baseUrl) }
+          }
+        : { spec, prompt, kickoff, identityFile, agentsDir: this.opts.agentsDir, settingsFile, node: this.nodeBin, llm }
+    );
+    const allowed = [...(provider.keyEnv ?? []), ...(spec.secrets ?? [])];
+    const term = { TERM: 'xterm-256color', COLORTERM: 'truecolor', FORCE_COLOR: '1' };
+    const hiveVars = { HIVE_TOKEN: token, HIVE_AGENT: id, HIVE_SIM_SPEED: String(this.opts.simSpeed ?? 1) };
+
+    let command = launch.command;
+    let args = launch.args;
+    let env: Record<string, string>;
+    if (sandboxed) {
+      // The container gets only scoped secrets + harness vars — no host environment (SR-3).
+      const launchEnv = Object.fromEntries(Object.entries(launch.env ?? {}).map(([k, v]) => [k, /URL$/.test(k) ? hostUrl(v) : v]));
+      const inner = buildAgentEnv({
+        inherited: {},
+        secrets: this.opts.secrets ?? {},
+        allowed,
+        launch: launchEnv,
+        harness: { ...term, ...hiveVars, HIVE_URL: `http://host.docker.internal:${this.server.port}`, HIVE_AGENT_DIR: SANDBOX.agent }
+      });
+      const secretEnv = Object.fromEntries(Object.entries(inner).filter(([k]) => looksLikeCredential(k)));
+      const plainEnv = Object.fromEntries(Object.entries(inner).filter(([k]) => !looksLikeCredential(k)));
+      // Host shells (powershell.exe, the operator's $SHELL) don't exist in the image.
+      const hostShell = provider.id === 'shell' || /^(powershell|pwsh|cmd)(\.exe)?$/i.test(command);
+      const name = `hivefloor-${homeLabel(this.opts.home)}-${id}-${randomBytes(3).toString('hex')}`;
+      const d = buildDockerLaunch({
+        id,
+        name,
+        image: spec.sandboxImage || DEFAULT_SANDBOX_IMAGE,
+        platform: process.platform,
+        workdir,
+        extraMounts: spec.isolation === 'worktree' && workdir !== spec.cwd ? [spec.cwd] : [],
+        agentsDir: this.opts.agentsDir,
+        agentDir: dir,
+        binDir: this.sandboxBin,
+        homeDir: this.sandboxHome(id),
+        command: hostShell ? 'bash' : command,
+        args: hostShell ? [] : args,
+        secretEnv,
+        plainEnv,
+        user: process.platform === 'linux' && process.getuid && process.getgid ? `${process.getuid()}:${process.getgid()}` : undefined,
+        labels: { 'dev.hivefloor.home': homeLabel(this.opts.home) }
+      });
+      command = d.command;
+      args = d.args;
+      // The docker client itself: host env minus credentials, plus the secret values it forwards by name.
+      env = { ...buildAgentEnv({ inherited: process.env, secrets: {}, allowed: [], harness: term }), ...d.clientEnv };
+      this.containers.set(id, name);
+    } else {
+      env = buildAgentEnv({
+        inherited: process.env,
+        secrets: this.opts.secrets ?? {},
+        allowed,
+        launch: launch.env,
+        harness: {
+          ...term,
+          ...hiveVars,
+          HIVE_URL: this.server.url,
+          HIVE_HOME: this.hive.root,
+          HIVE_AGENT_DIR: dir,
+          PATH: `${this.binDir}${delimiter}${process.env.PATH ?? ''}`
+        }
+      });
+      if (this.opts.runAsNode && launch.command === this.nodeBin) env.ELECTRON_RUN_AS_NODE = '1';
+    }
     delete env.ELECTRON_NO_ATTACH_CONSOLE;
-    const pid = this.pty.spawn({ id, command: launch.command, args: launch.args, cwd: workdir, env, cols: size?.cols, rows: size?.rows });
-    this.setState(id, { status: 'idle', station: 'desk', note: 'on shift', pid, workdir });
+    const pid = this.pty.spawn({ id, command, args, cwd: workdir, env, cols: size?.cols, rows: size?.rows });
+    this.setState(id, { status: 'idle', station: 'desk', note: sandboxed ? 'on shift (sandboxed)' : 'on shift', pid, workdir });
+  }
+
+  // ─── sandbox (specs/003-agent-sandbox) ────────────────────────────────────
+
+  private get sandboxBin(): string {
+    return join(this.opts.home, 'sandbox', 'bin');
+  }
+
+  private sandboxHome(id: string): string {
+    const d = join(this.opts.home, 'sandbox', id, 'home');
+    mkdirSync(d, { recursive: true });
+    return d;
+  }
+
+  private async prepareSandbox(spec: AgentSpec): Promise<void> {
+    if (!(await dockerAvailable())) throw new Error('Docker is not running — start Docker Desktop (or Docker Engine) to use the sandbox');
+    const sandboxDir = this.opts.sandboxDir ?? join(this.opts.agentsDir, '..', 'sandbox');
+    await ensureImage(spec.sandboxImage || DEFAULT_SANDBOX_IMAGE, sandboxDir, (s) => {
+      this.setState(spec.id, { note: s });
+      this.log('info', s, spec.id);
+    });
+    writeContainerShim(this.sandboxBin);
+    this.server.allowHost('host.docker.internal');
+    if (process.platform === 'linux') {
+      // Docker Engine on Linux can't reach 127.0.0.1 on the host: also listen on the bridge gateway.
+      const gw = await bridgeGateway();
+      await this.server.listenAlso(gw);
+      this.server.allowHost(gw);
+    }
   }
 
   stopAgent(id: string): void {

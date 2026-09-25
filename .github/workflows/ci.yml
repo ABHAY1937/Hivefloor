@@ -32,6 +32,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      # Linux runners have Docker: build the default sandbox image (without the agent
+      # CLIs, to keep CI fast) so the Dockerfile stays valid; the sandbox integration
+      # test then runs against a real daemon.
+      - if: runner.os == 'Linux'
+        run: docker build --build-arg CLIS= -t hivefloor-agent:ci resources/sandbox
       - run: npm test
       - run: npm run eval
       - run: npm run audit:deps

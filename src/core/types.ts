@@ -27,6 +27,12 @@ export interface AgentSpec {
   /** Custom command override (provider 'custom'). */
   command?: string;
   args?: string[];
+  /** Extra stored secrets this agent may receive, beyond its provider's own keys. */
+  secrets?: string[];
+  /** 'docker' runs the agent in a locked-down container (specs/003-agent-sandbox). */
+  sandbox?: 'none' | 'docker';
+  /** Container image for sandbox 'docker' (default hivefloor-agent:1, built on first use). */
+  sandboxImage?: string;
   createdAt: number;
 }
 

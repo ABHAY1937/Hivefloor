@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { call, select, useStore } from '../store';
 import { MemoryList } from './MemoryPanel';
 import { Portrait, StatusDot, ago, useAgentName, Empty } from './common';
+import { AgentKeys, SandboxField } from './Modals';
 import { TerminalView } from './TerminalView';
 
 type Sub = 'terminal' | 'memory' | 'messages' | 'setup';
@@ -96,7 +97,7 @@ function AgentMessages({ id }: { id: string }) {
 function AgentSetup({ id }: { id: string }) {
   const agent = useStore((s) => s.agents[id]);
   const providers = useStore((s) => s.providers);
-  const [f, setF] = useState({ ...agent, skills: agent.skills.join(', ') });
+  const [f, setF] = useState({ ...agent, skills: agent.skills.join(', '), secrets: agent.secrets ?? [], sandbox: agent.sandbox ?? 'none', sandboxImage: agent.sandboxImage ?? '' });
   const [saved, setSaved] = useState(false);
   const save = async (restart: boolean) => {
     await call('updateAgent', id, {
@@ -107,7 +108,10 @@ function AgentSetup({ id }: { id: string }) {
       skills: f.skills.split(',').map((s) => s.trim()).filter(Boolean),
       cwd: f.cwd,
       isolation: f.isolation,
-      command: f.command || undefined
+      command: f.command || undefined,
+      secrets: f.secrets,
+      sandbox: f.sandbox,
+      sandboxImage: f.sandboxImage || undefined
     });
     if (restart) await call('restart', id);
     setSaved(true);
@@ -141,6 +145,8 @@ function AgentSetup({ id }: { id: string }) {
           <option value="worktree">Own git worktree + branch</option>
         </select>
       </label>
+      <SandboxField sandbox={f.sandbox} image={f.sandboxImage} onChange={(v) => setF({ ...f, sandbox: v.sandbox, sandboxImage: v.image })} />
+      <AgentKeys provider={f.provider} value={f.secrets} onChange={(secrets) => setF({ ...f, secrets })} />
       <div className="row end">
         {saved && <span className="ok">Saved</span>}
         <button className="danger ghost" onClick={() => { if (confirm(`Remove ${agent.name} from the office? Their memory stays in the hive.`)) void call('fire', id).then(() => select(null)); }}>Remove agent</button>

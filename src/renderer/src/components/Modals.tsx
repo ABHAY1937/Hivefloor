@@ -20,6 +20,53 @@ function Modal({ title, children, onClose }: { title: string; children: React.Re
   );
 }
 
+/** Which stored keys an agent gets: its engine's own automatically, others only if ticked. */
+export function AgentKeys({ provider, value, onChange }: { provider: string; value: string[]; onChange: (v: string[]) => void }) {
+  const providers = useStore((s) => s.providers);
+  const settings = useStore((s) => s.settings);
+  const auto = providers.find((p) => p.id === provider)?.keyEnv ?? [];
+  const extra = (settings?.secrets ?? []).filter((k) => !auto.includes(k) && k !== 'HIVE_LLM_API_KEY');
+  return (
+    <label>
+      Keys this agent can use
+      <span className="hint">
+        {auto.length ? <>From its engine, automatically: {auto.map((k) => <code key={k}>{k}</code>)}. </> : 'Its engine needs no stored key. '}
+        No other stored key reaches this agent unless you tick it.
+      </span>
+      {extra.length ? (
+        <div className="chips">
+          {extra.map((k) => (
+            <button type="button" key={k} className={`chip ${value.includes(k) ? 'on' : ''}`} onClick={() => onChange(value.includes(k) ? value.filter((x) => x !== k) : [...value, k])}>
+              {value.includes(k) ? '✓ ' : ''}{k}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <span className="hint">Add other keys (e.g. GITHUB_TOKEN) in Settings → API keys to grant them here.</span>
+      )}
+    </label>
+  );
+}
+
+/** Where the agent runs: on this machine, or in a locked-down Docker container. */
+export function SandboxField({ sandbox, image, onChange }: { sandbox: 'none' | 'docker'; image: string; onChange: (v: { sandbox: 'none' | 'docker'; image: string }) => void }) {
+  return (
+    <label>
+      Sandbox
+      <select value={sandbox} onChange={(e) => onChange({ sandbox: e.target.value as 'none' | 'docker', image })}>
+        <option value="none">None: runs on this machine as you</option>
+        <option value="docker">Docker container: sees only its working folder (recommended for untrusted code)</option>
+      </select>
+      {sandbox === 'docker' && (
+        <>
+          <input value={image} placeholder="hivefloor-agent:1 (built automatically on first start)" onChange={(e) => onChange({ sandbox, image: e.target.value.trim() })} />
+          <span className="hint">Needs Docker Desktop or Docker Engine running. No capabilities, no privilege escalation, memory/CPU/process limits; CLI logins are kept per agent, separate from your home folder.</span>
+        </>
+      )}
+    </label>
+  );
+}
+
 const ROLES = [
   { name: 'Backend engineer', skills: 'api, database, sql, node, python, auth, server' },
   { name: 'Frontend engineer', skills: 'react, ui, css, design, component, page, dashboard' },
@@ -43,7 +90,10 @@ export function HireModal() {
     cwd: settings?.workspace ?? '',
     isolation: 'shared' as 'shared' | 'worktree',
     isBoss: !hasBoss,
-    command: ''
+    command: '',
+    secrets: [] as string[],
+    sandbox: 'none' as 'none' | 'docker',
+    sandboxImage: ''
   });
   const [err, setErr] = useState('');
   const close = () => store.set({ modal: null });
@@ -59,7 +109,10 @@ export function HireModal() {
         cwd: f.cwd || undefined,
         isolation: f.isolation,
         isBoss: f.isBoss,
-        command: f.command || undefined
+        command: f.command || undefined,
+        secrets: f.secrets,
+        sandbox: f.sandbox,
+        sandboxImage: f.sandboxImage || undefined
       });
       close();
       select(spec.id);
@@ -97,7 +150,12 @@ export function HireModal() {
             ))}
           </div>
         </label>
-        {p && p.bin && <div className="hint">Requires <code>{p.bin}</code> on your PATH{p.keyEnv.length ? ` and a login or ${p.keyEnv.join(' / ')} (Settings → Keys)` : ''}.</div>}
+        {p && p.bin && (
+          <div className="hint">
+            {f.sandbox === 'docker' ? <>Runs <code>{p.bin}</code> inside the sandbox image (the default image includes Claude Code, Codex and Gemini CLI)</> : <>Requires <code>{p.bin}</code> on your PATH</>}
+            {p.keyEnv.length ? ` and a login or ${p.keyEnv.join(' / ')} (Settings → Keys)` : ''}.
+          </div>
+        )}
         <div className="row">
           <label className="grow">Model (optional)<input value={f.model} onChange={(e) => setF({ ...f, model: e.target.value })} placeholder={f.provider === 'hive-llm' ? settings?.llm.model : 'provider default'} /></label>
           {f.provider === 'custom' && <label className="grow">Command<input value={f.command} onChange={(e) => setF({ ...f, command: e.target.value })} placeholder="e.g. my-agent --tui" /></label>}
@@ -116,6 +174,8 @@ export function HireModal() {
             <option value="worktree">Own git worktree + branch — zero collisions (git repos only)</option>
           </select>
         </label>
+        <SandboxField sandbox={f.sandbox} image={f.sandboxImage} onChange={(v) => setF({ ...f, sandbox: v.sandbox, sandboxImage: v.image })} />
+        <AgentKeys provider={f.provider} value={f.secrets} onChange={(secrets) => setF({ ...f, secrets })} />
         {err && <div className="error">{err}</div>}
         <div className="row end">
           <button className="ghost" onClick={close}>Cancel</button>
@@ -154,6 +214,8 @@ export function SettingsModal() {
   });
   const [workspace, setWorkspace] = useState(settings.workspace);
   const [keys, setKeys] = useState<Record<string, string>>({});
+  const [custom, setCustom] = useState({ name: '', value: '' });
+  const [err, setErr] = useState('');
   const [stats, setStats] = useState<{ pty: { id: string; bytes: number; paused: boolean }[]; rpcRequests: number } | null>(null);
   const [saved, setSaved] = useState(false);
   const close = () => store.set({ modal: null });
@@ -163,18 +225,27 @@ export function SettingsModal() {
   const save = async () => {
     const secrets: Record<string, string | null> = {};
     for (const [k, v] of Object.entries(keys)) secrets[k] = v;
-    const next = await call<SettingsView>('saveSettings', {
-      llm,
-      workspace,
-      secrets,
-      policy: {
-        spendThresholdUsd: Number(policy.spendThresholdUsd) || 0,
-        bigChangeFiles: Number(policy.bigChangeFiles) || 25,
-        alwaysAsk: policy.alwaysAsk.split('\n').map((s) => s.trim()).filter(Boolean)
-      }
-    });
+    if (custom.name.trim() && custom.value) secrets[custom.name.trim().toUpperCase()] = custom.value;
+    setErr('');
+    let next: SettingsView;
+    try {
+      next = await call<SettingsView>('saveSettings', {
+        llm,
+        workspace,
+        secrets,
+        policy: {
+          spendThresholdUsd: Number(policy.spendThresholdUsd) || 0,
+          bigChangeFiles: Number(policy.bigChangeFiles) || 25,
+          alwaysAsk: policy.alwaysAsk.split('\n').map((s) => s.trim()).filter(Boolean)
+        }
+      });
+    } catch (e) {
+      setErr((e as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, ''));
+      return;
+    }
     store.set({ settings: next });
     setKeys({});
+    setCustom({ name: '', value: '' });
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
   };
@@ -198,7 +269,7 @@ export function SettingsModal() {
           <label className="grow">Default model<input value={llm.model} onChange={(e) => setLlm({ ...llm, model: e.target.value })} /></label>
         </div>
 
-        <div className="section-title">API keys — encrypted with your OS keychain, injected only into agent processes</div>
+        <div className="section-title">API keys — encrypted with your OS keychain; each agent gets only its engine's keys plus the ones you tick for it</div>
         {KEYS.map((k) => (
           <label key={k.env}>
             {k.label} <code>{k.env}</code> {settings.secrets.includes(k.env) && <span className="tag gold">saved</span>}
@@ -208,6 +279,19 @@ export function SettingsModal() {
             </div>
           </label>
         ))}
+        {settings.secrets.filter((k) => !KEYS.some((x) => x.env === k)).map((k) => (
+          <div key={k} className="row">
+            <code className="grow">{k}</code> <span className="tag gold">saved</span>
+            <button className="ghost" onClick={() => setKeys({ ...keys, [k]: '' })}>{keys[k] === '' ? 'Will be removed' : 'Remove'}</button>
+          </div>
+        ))}
+        <label>
+          Add another key (e.g. GITHUB_TOKEN), then grant it per agent in Hire / Setup
+          <div className="row">
+            <input placeholder="NAME" value={custom.name} onChange={(e) => setCustom({ ...custom, name: e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_') })} />
+            <input className="grow" type="password" placeholder="value" value={custom.value} onChange={(e) => setCustom({ ...custom, value: e.target.value })} />
+          </div>
+        </label>
 
         <div className="section-title">When should agents ask you?</div>
         <div className="row">
@@ -229,6 +313,7 @@ export function SettingsModal() {
           Data lives in <code>{home}</code> (hive log, snapshots, per-agent memory.md). Terminal backend: <b>{backend}</b>.
           {stats && <> Control-server requests: {stats.rpcRequests}. PTY sessions: {stats.pty.length} ({stats.pty.map((p) => `${p.id} ${(p.bytes / 1024).toFixed(0)}KB${p.paused ? ' paused' : ''}`).join(', ')}).</>}
         </div>
+        {err && <div className="error">{err}</div>}
         <div className="row end">
           {saved && <span className="ok">Saved — restart agents to apply new keys/models</span>}
           <button className="ghost" onClick={close}>Close</button>

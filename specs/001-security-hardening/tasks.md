@@ -22,15 +22,15 @@
       SmartScreen warnings, and enterprises block them
 - [ ] T15 **Auto-update** (electron-updater) over HTTPS with signed artifacts, so
       security fixes actually reach users
-- [ ] T16 **Secret scoping**: inject only the provider's `keyEnv` keys (plus keys the user
+- [x] T16 **Secret scoping** → done in [002](../002-secret-scoping/spec.md): inject only the provider's `keyEnv` keys (plus keys the user
       explicitly assigns to that agent) instead of every stored secret
-- [ ] T17 **Agent containment**: optional per-agent OS sandbox (container / Windows
+- [x] T17 **Agent containment** → Docker sandbox in [003](../003-agent-sandbox/spec.md); OS-native option still open there: optional per-agent OS sandbox (container / Windows
       Sandbox / macOS sandbox-exec, or a restricted user) so a prompt-injected agent
       can't reach the rest of the machine. The regex policy is not a sandbox
 - [ ] T18 Short-lived, per-session tokens: rotate `HIVE_TOKEN` on restart (already the
       case), and consider per-child-process scoping
 - [ ] T19 Rate limit / quota on agent RPCs (memory and message flooding by a runaway agent)
-- [ ] T20 License and ownership: `package.json` says MIT but there is no LICENSE file.
+- [x] T20 License and ownership → MIT © 2026 Abhay, LICENSE + THIRD_PARTY_NOTICES.md + CONTRIBUTING.md (DCO). Was: `package.json` says MIT but there is no LICENSE file.
       Decide the license (MIT/Apache-2.0/commercial) before a company ships it, and
       confirm the rights to code inspired by munder-difflin
 - [ ] T21 Privacy policy and data-handling statement (what goes to model providers)

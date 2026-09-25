@@ -12,7 +12,7 @@ It's inspired by [munder-difflin](https://github.com/chaitanyagiri/munder-diffli
 npm install            # node-pty ships N-API prebuilds for macOS/Windows; Linux compiles it (needs make/g++/python3)
 npm run dev            # launch the app (hot reload)
 npm run demo:headless  # or: run the whole office in your terminal, no Electron
-npm test               # 20 tests: core, security, real-PTY end-to-end
+npm test               # 26 tests: core, security, sandbox, real-PTY end-to-end
 npm run eval           # score the approval classifier on a labelled set
 npm run check          # typecheck + tests + evals + dependency audit (the CI gate)
 npm run bench          # compare against the reference harness design
@@ -31,6 +31,7 @@ On first launch, Hivefloor sets up a demo office: **Morgan** (boss), Ada (backen
 | **Approvals only when needed** | A policy engine flags spend, deletes (`rm -rf`, `DROP TABLE`, force-push…), big changes (publish, prod deploy, pushes to main, large rewrites, over N files) and external messages. Once you approve, the approval is attached to the tasks, so workers aren't asked again. Agents can't reuse an approval that was granted to someone else. |
 | **Memory** | Each agent has long-term memory (`hive remember` / `hive recall`), and there's also shared memory. It's saved as an event log plus a readable `memory.md` for each agent, and indexed in-process with BM25 (sub-millisecond at 20k entries). It survives restarts. |
 | **No stepping on toes** | File **leases** (prefix-aware: `src/api` conflicts with `src/api/x.ts`), or give each agent its **own git worktree and branch**. Tasks are claimed atomically. A hop cap stops agents from bouncing messages back and forth forever. |
+| **Sandboxed agents** | Optionally run any agent in a locked-down Docker container that sees only its working folder: no capabilities, non-root, resource limits, private home. Each agent only gets the API keys its engine needs plus the ones you grant it. |
 | **Your keys, local models** | Keys are encrypted with your OS keychain (Electron safeStorage) and only passed to agent processes. The built-in agent works with any OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, OpenAI, OpenRouter) or with Anthropic. |
 | **Cross-platform** | macOS, Windows and Linux. The `hive` CLI is plain Node, with `sh`, `.cmd` and `.ps1` shims. |
 
@@ -113,3 +114,10 @@ bin/hive(.cmd/.ps1)     CLI shims
 | Gemini CLI | `gemini` on PATH |
 | Aider, OpenCode | the CLI on PATH |
 | Custom / shell | any command |
+
+## License
+
+[MIT](./LICENSE) © 2026 Abhay. Third-party components and prior art are credited in
+[THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md). The license covers the code, not
+the "Hivefloor" name or logo. Contributions are accepted under the same license with a
+DCO sign-off (see [CONTRIBUTING.md](./CONTRIBUTING.md)).

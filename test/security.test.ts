@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Harness } from '../src/core/harness';
 import { resolveCommand } from '../src/core/pty';
+import { buildAgentEnv, looksLikeCredential } from '../src/core/env';
 
 const agentsDir = resolve(__dirname, '../resources/agents');
 
@@ -109,4 +110,49 @@ test('Windows command resolution finds .cmd/.exe shims on PATH', { skip: process
   writeFileSync(join(dir, 'fakeagent.cmd'), '@echo off');
   assert.equal(resolveCommand('fakeagent', { PATH: dir, PATHEXT: '.EXE;.CMD' }).toLowerCase(), join(dir, 'fakeagent.cmd').toLowerCase());
   assert.equal(resolveCommand('C:\\x\\y.exe', { PATH: dir }), 'C:\\x\\y.exe');
+});
+
+// ─── specs/002-secret-scoping ────────────────────────────────────────────────
+
+test('agents get only their engine\'s keys plus ones granted to them', () => {
+  const base = {
+    inherited: { PATH: '/usr/bin', HOME: '/home/a', LANG: 'en_US.UTF-8', GITHUB_TOKEN: 'inherited-gh', AWS_SECRET_ACCESS_KEY: 'aws', OPENAI_API_KEY: 'inherited-openai' },
+    secrets: { ANTHROPIC_API_KEY: 'sk-ant', OPENAI_API_KEY: 'sk-openai', GITHUB_TOKEN: 'stored-gh', HIVE_TOKEN: 'evil' },
+    harness: { HIVE_TOKEN: 'real-token', HIVE_URL: 'http://127.0.0.1:1' }
+  };
+  const claude = buildAgentEnv({ ...base, allowed: ['ANTHROPIC_API_KEY'] });
+  assert.equal(claude.ANTHROPIC_API_KEY, 'sk-ant');
+  assert.equal(claude.OPENAI_API_KEY, undefined, 'stored key of another engine is withheld');
+  assert.equal(claude.GITHUB_TOKEN, undefined, 'inherited credential is stripped');
+  assert.equal(claude.AWS_SECRET_ACCESS_KEY, undefined);
+  assert.equal(claude.PATH, '/usr/bin', 'ordinary variables still pass');
+  assert.equal(claude.LANG, 'en_US.UTF-8');
+  assert.equal(claude.HIVE_TOKEN, 'real-token', 'harness variables cannot be shadowed');
+
+  const devops = buildAgentEnv({ ...base, allowed: ['ANTHROPIC_API_KEY', 'GITHUB_TOKEN', 'HIVE_TOKEN'] });
+  assert.equal(devops.GITHUB_TOKEN, 'stored-gh', 'a granted key reaches the agent; stored beats inherited');
+  assert.equal(devops.HIVE_TOKEN, 'real-token');
+
+  const shell = buildAgentEnv({ ...base, allowed: [] });
+  assert.ok(!Object.keys(shell).some((k) => looksLikeCredential(k) && k !== 'HIVE_TOKEN'), 'shell agent gets no credentials by default');
+});
+
+test('startAgent applies secret scoping to the real process environment', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'hf-sec-'));
+  const h = new Harness({ home, agentsDir, secrets: { ANTHROPIC_API_KEY: 'sk-ant', GITHUB_TOKEN: 'gh' } });
+  await h.start();
+  let seen: Record<string, string> = {};
+  const spawn = h.pty.spawn.bind(h.pty);
+  h.pty.spawn = (o) => ((seen = o.env), spawn(o));
+  try {
+    h.hire({ name: 'Boss', role: 'boss', provider: 'sim', isBoss: true });
+    await h.startAgent('boss');
+    assert.equal(seen.ANTHROPIC_API_KEY, undefined, 'the demo engine needs no keys');
+    assert.equal(seen.GITHUB_TOKEN, undefined);
+    h.hive.updateAgent('boss', { secrets: ['GITHUB_TOKEN'] });
+    await h.restartAgent('boss');
+    assert.equal(seen.GITHUB_TOKEN, 'gh', 'ticked key is passed');
+  } finally {
+    await h.stop();
+  }
 });

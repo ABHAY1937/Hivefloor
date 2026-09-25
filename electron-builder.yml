@@ -1,5 +1,6 @@
 appId: dev.hivefloor.app
 productName: Hivefloor
+copyright: Copyright © 2026 Abhay
 directories:
   output: dist
 files:
@@ -8,6 +9,12 @@ files:
 extraResources:
   - from: resources/agents
     to: agents
+  - from: resources/sandbox
+    to: sandbox
+  - from: LICENSE
+    to: LICENSE
+  - from: THIRD_PARTY_NOTICES.md
+    to: THIRD_PARTY_NOTICES.md
 asarUnpack:
   - node_modules/node-pty/**
 mac:

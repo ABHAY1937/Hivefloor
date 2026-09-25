@@ -38,3 +38,5 @@ Agents must cite requirement IDs in commits and must not widen scope beyond `tas
 | # | Spec | Status |
 |---|---|---|
 | 001 | [Security hardening & policy evals](001-security-hardening/spec.md) | Implemented (open items in tasks.md) |
+| 002 | [Per-agent secret scoping](002-secret-scoping/spec.md) | Implemented |
+| 003 | [Agent sandbox (Docker)](003-agent-sandbox/spec.md) | Implemented (manual macOS check, egress allowlist open) |

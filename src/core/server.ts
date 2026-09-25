@@ -10,6 +10,10 @@ export type RpcHandler = (agent: string, method: string, params: Record<string, 
 
 export class ControlServer {
   private server: Server | null = null;
+  private extra: Server[] = [];
+  private listening = new Set<string>(['127.0.0.1']);
+  /** Host headers accepted besides 127.0.0.1/localhost (e.g. host.docker.internal). */
+  private hosts = new Set<string>(['127.0.0.1', 'localhost']);
   private tokens = new Map<string, string>(); // token -> agent id
   port = 0;
   requests = 0;
@@ -41,12 +45,43 @@ export class ControlServer {
     });
   }
 
-  close(): Promise<void> {
-    return new Promise((r) => {
-      if (!this.server) return r();
-      this.server.closeAllConnections?.();
-      this.server.close(() => r());
+  /** Accept requests whose Host is this name (containers reach us as host.docker.internal). */
+  allowHost(name: string): void {
+    this.hosts.add(name);
+  }
+
+  /**
+   * Also listen on another local address on the same port, e.g. the Linux docker0
+   * gateway so sandboxed agents can connect. Still token-protected. Idempotent.
+   */
+  async listenAlso(address: string): Promise<void> {
+    if (this.listening.has(address)) return;
+    this.listening.add(address);
+    const srv = createServer((req, res) => void this.handle(req, res));
+    srv.requestTimeout = 0;
+    await new Promise<void>((resolve, reject) => {
+      srv.once('error', (e) => {
+        this.listening.delete(address);
+        reject(e);
+      });
+      srv.listen(this.port, address, () => resolve());
     });
+    this.extra.push(srv);
+    this.hosts.add(address);
+  }
+
+  close(): Promise<void> {
+    const all = [this.server, ...this.extra].filter((s): s is Server => !!s);
+    this.extra = [];
+    return Promise.all(
+      all.map(
+        (srv) =>
+          new Promise<void>((r) => {
+            srv.closeAllConnections?.();
+            srv.close(() => r());
+          })
+      )
+    ).then(() => undefined);
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -59,7 +94,8 @@ export class ControlServer {
     // DNS-rebinding guard: a browser tab pointed at an attacker hostname that resolves
     // to 127.0.0.1 carries that hostname in Host. Agents always use 127.0.0.1:<port>.
     const host = req.headers.host ?? '';
-    if (host !== `127.0.0.1:${this.port}` && host !== `localhost:${this.port}`) return send(403, { error: 'bad host' });
+    const sep = host.lastIndexOf(':');
+    if (sep < 0 || host.slice(sep + 1) !== String(this.port) || !this.hosts.has(host.slice(0, sep))) return send(403, { error: 'bad host' });
     if (req.method === 'GET' && req.url === '/health') return send(200, { ok: true });
     if (req.method !== 'POST' || req.url !== '/rpc') return send(404, { error: 'not found' });
     const auth = req.headers.authorization ?? '';
