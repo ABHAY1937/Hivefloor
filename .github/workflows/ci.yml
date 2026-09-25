@@ -16,6 +16,7 @@ jobs:
   check:
     name: check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -30,6 +31,10 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      # node-pty's macOS prebuilt spawn-helper can lose its exec bit in the npm tarball,
+      # which makes every PTY spawn fail with posix_spawnp.
+      - if: runner.os == 'macOS'
+        run: ls -l node_modules/node-pty/prebuilds/darwin-*/ && chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper
       - run: npm run typecheck
       - run: npm test
       - run: npm run eval

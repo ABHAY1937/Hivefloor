@@ -4,9 +4,15 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Major upgrades (React 19, xterm 6, …) change behaviour: they go through a
+    # spec in specs/ and a hand-made PR, not an automatic one. Security fixes
+    # still arrive via Dependabot security updates regardless of this rule.
+    ignore:
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
     groups:
-      electron-toolchain:
-        patterns: [electron, electron-*, vite, '@vitejs/*']
+      minor-and-patch:
+        update-types: [minor, patch]
   - package-ecosystem: github-actions
     directory: /
     schedule:
