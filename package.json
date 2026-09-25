@@ -24,7 +24,8 @@
     "dist:linux": "electron-vite build && electron-builder --linux",
     "eval": "tsx scripts/eval-policy.ts",
     "audit:deps": "npm audit --audit-level=high",
-    "check": "npm run typecheck && npm test && npm run eval && npm run audit:deps"
+    "check": "npm run typecheck && npm test && npm run eval && npm run audit:deps",
+    "hooks": "git config core.hooksPath scripts/hooks"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",

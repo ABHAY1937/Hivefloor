@@ -18,3 +18,10 @@ the owner has authorised in writing may contribute.
 2. `npm run check` must pass (typecheck, tests, evals, dependency audit).
 3. Changes to `src/core/policy.ts` add eval cases to `evals/policy/cases.json` first.
 4. Report security issues to the owner privately (see [SECURITY.md](SECURITY.md)).
+
+## Protecting main
+GitHub Free can't enforce branch protection on a private repo, so `main` is
+guarded locally. Run `npm run hooks` once per clone. It installs a pre-push hook
+that refuses force-pushes and deletion of `main`, and runs the typecheck and tests
+before `main` is pushed. Releases are tagged (`v0.2.0`, …). Upgrading to GitHub Pro
+lets the same rules be enforced on GitHub itself (see specs/001 tasks T25).

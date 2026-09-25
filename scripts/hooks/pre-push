@@ -1,0 +1,24 @@
+#!/bin/sh
+# Hivefloor pre-push guard (installed by `npm run hooks`). GitHub Free can't
+# protect branches on a private repo, so this protects main from this machine:
+#   - refuses force-pushes (history rewrites) and deletion of main
+#   - runs the typecheck and tests before main is pushed
+# Deliberate override for a one-off: git push --no-verify
+
+zero=0000000000000000000000000000000000000000
+while read local_ref local_sha remote_ref remote_sha; do
+  [ "$remote_ref" = "refs/heads/main" ] || continue
+  if [ "$local_sha" = "$zero" ]; then
+    echo "pre-push: refusing to delete main." >&2
+    exit 1
+  fi
+  if [ "$remote_sha" != "$zero" ] && ! git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
+    echo "pre-push: refusing to force-push main (it would rewrite published history)." >&2
+    echo "          If you really mean it: git push --no-verify ..." >&2
+    exit 1
+  fi
+  echo "pre-push: checking main (typecheck + tests)…" >&2
+  npm run -s typecheck >&2 || { echo "pre-push: typecheck failed; not pushing." >&2; exit 1; }
+  npm test --silent >/dev/null 2>&1 || { echo "pre-push: tests failed (run npm test); not pushing." >&2; exit 1; }
+done
+exit 0
