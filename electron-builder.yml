@@ -1,0 +1,20 @@
+appId: dev.hivefloor.app
+productName: Hivefloor
+directories:
+  output: dist
+files:
+  - out/**
+  - package.json
+extraResources:
+  - from: resources/agents
+    to: agents
+asarUnpack:
+  - node_modules/node-pty/**
+mac:
+  target: [dmg, zip]
+  category: public.app-category.developer-tools
+win:
+  target: [nsis]
+linux:
+  target: [AppImage, deb]
+  category: Development
