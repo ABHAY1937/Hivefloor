@@ -3,7 +3,7 @@
 // authenticated caller, not against what the payload claims.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -98,7 +98,7 @@ test('llm-agent file tools stay inside the working directory', async () => {
   const src = require('node:fs').readFileSync(join(agentsDir, 'llm-agent.cjs'), 'utf8') as string;
   const body = src.slice(src.indexOf('const ROOT'), src.indexOf('function runShell'));
   const safePath = new Function('fs', 'path', 'CWD', `${body}; return safePath;`)(require('node:fs'), require('node:path'), app) as (p: string) => string;
-  assert.ok(safePath('src/x.ts').startsWith(app));
+  assert.ok(safePath('src/x.ts').startsWith(realpathSync(app)), 'macOS tmpdir is a symlink: compare real paths');
   assert.throws(() => safePath('../app-secrets/key'), /escapes/, 'sibling dir with a shared prefix');
   assert.throws(() => safePath('/etc/passwd'), /escapes/);
   if (linked) assert.throws(() => safePath('link/key'), /symlink/);

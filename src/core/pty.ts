@@ -14,8 +14,8 @@
 // still works (without full TTY semantics).
 
 import { spawn as cpSpawn, type ChildProcess } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { delimiter, join } from 'node:path';
+import { chmodSync, existsSync, statSync } from 'node:fs';
+import { delimiter, dirname, join } from 'node:path';
 import { Bus } from './bus';
 
 export interface PtySpawnOptions {
@@ -95,11 +95,28 @@ function loadNodePty() {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     nodePty = require('node-pty');
+    if (process.platform === 'darwin') ensureSpawnHelperExecutable();
   } catch (e) {
     console.warn('[pty] node-pty unavailable, falling back to pipes:', (e as Error).message);
     nodePty = null;
   }
   return nodePty;
+}
+
+/**
+ * node-pty's macOS prebuilt `spawn-helper` can ship without its exec bit, and then
+ * every spawn fails with "posix_spawnp failed". Restore it once at load time.
+ */
+function ensureSpawnHelperExecutable(): void {
+  try {
+    const root = dirname(require.resolve('node-pty/package.json')).replace('app.asar', 'app.asar.unpacked');
+    for (const dir of [join(root, 'build', 'Release'), join(root, 'prebuilds', `darwin-${process.arch}`)]) {
+      const helper = join(dir, 'spawn-helper');
+      if (existsSync(helper) && (statSync(helper).mode & 0o111) === 0) chmodSync(helper, 0o755);
+    }
+  } catch (e) {
+    console.warn('[pty] could not check spawn-helper permissions:', (e as Error).message);
+  }
 }
 
 export class PtyManager {
