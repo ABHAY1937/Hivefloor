@@ -30,7 +30,7 @@
 - [ ] T18 Short-lived, per-session tokens: rotate `HIVE_TOKEN` on restart (already the
       case), and consider per-child-process scoping
 - [ ] T19 Rate limit / quota on agent RPCs (memory and message flooding by a runaway agent)
-- [x] T20 License and ownership → proprietary, © 2026 Abhay, all rights reserved (internal use). LICENSE + THIRD_PARTY_NOTICES.md + CONTRIBUTING.md (written agreement for contributors). Was: `package.json` says MIT but there is no LICENSE file.
+- [x] T20 License and ownership → MIT © 2026 Abhay, LICENSE + THIRD_PARTY_NOTICES.md + CONTRIBUTING.md (DCO). Was: `package.json` says MIT but there is no LICENSE file.
       Decide the license (MIT/Apache-2.0/commercial) before a company ships it, and
       confirm the rights to code inspired by munder-difflin
 - [ ] T21 Privacy policy and data-handling statement (what goes to model providers)
@@ -40,6 +40,7 @@
       ConPTY sessions, native crash in node-pty 1.1.0). It doesn't involve harness code
       (it spawns an absolute path), and the 5-agent demo runs fine. Reproduce on
       node-pty's latest version and report upstream
-- [ ] T25 Server-side protection for `main` (block force-push/deletion, require CI).
+- [ ] T25 Server-side protection for `main` (block force-push/deletion, require CI);
+      becomes free once the repo is public.
       This needs GitHub Pro for a private repo. Until then: local pre-push guard
       (`npm run hooks`), release tags, and offline `git bundle` backups

@@ -1,27 +1,29 @@
 # Contributing
 
-Hivefloor is proprietary, internal software (see [LICENSE](LICENSE)). Only people
-the owner has authorised in writing may contribute.
-
-## Before you contribute
-- You need a signed agreement with the owner. It confirms that everything you write
-  for Hivefloor is assigned to the owner, and it keeps the code confidential.
-- Don't paste in code from other projects unless its license allows proprietary use
-  (MIT, BSD, Apache-2.0, ISC are fine). Never copy GPL/AGPL code or code whose
-  license you don't know. Record new third-party code in
-  [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-- Commit with the identity the owner gave you, not an employer's email.
+Thanks for helping! A few rules keep the project healthy and its licensing clean.
 
 ## Process
 1. Non-trivial changes start as a spec. See [specs/README.md](specs/README.md) and the
    [constitution](specs/constitution.md).
 2. `npm run check` must pass (typecheck, tests, evals, dependency audit).
 3. Changes to `src/core/policy.ts` add eval cases to `evals/policy/cases.json` first.
-4. Report security issues to the owner privately (see [SECURITY.md](SECURITY.md)).
+4. Security issues go to a private advisory, not a public issue (see [SECURITY.md](SECURITY.md)).
+
+## Licensing of contributions (DCO)
+Hivefloor is MIT-licensed. By contributing you agree your contribution is licensed
+under the same MIT License ("inbound = outbound"). Every commit must be signed off
+under the [Developer Certificate of Origin](https://developercertificate.org/):
+
+```
+git commit -s -m "your message"
+```
+
+This adds `Signed-off-by: Your Name <you@example.com>`, which certifies that you wrote
+the change or otherwise have the right to submit it under the project license. Don't
+submit code copied from projects with incompatible licenses (for example GPL code, or
+code whose license you don't know).
 
 ## Protecting main
-GitHub Free can't enforce branch protection on a private repo, so `main` is
-guarded locally. Run `npm run hooks` once per clone. It installs a pre-push hook
-that refuses force-pushes and deletion of `main`, and runs the typecheck and tests
-before `main` is pushed. Releases are tagged (`v0.2.0`, …). Upgrading to GitHub Pro
-lets the same rules be enforced on GitHub itself (see specs/001 tasks T25).
+`main` is protected on GitHub: no force-pushes, no deletion, and CI must pass. On
+top of that, `npm run hooks` (once per clone) installs a local pre-push guard that
+runs the typecheck and tests before `main` is pushed.
