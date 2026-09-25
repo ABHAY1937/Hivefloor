@@ -40,7 +40,4 @@
       ConPTY sessions, native crash in node-pty 1.1.0). It doesn't involve harness code
       (it spawns an absolute path), and the 5-agent demo runs fine. Reproduce on
       node-pty's latest version and report upstream
-- [ ] T25 Server-side protection for `main` (block force-push/deletion, require CI);
-      becomes free once the repo is public.
-      This needs GitHub Pro for a private repo. Until then: local pre-push guard
-      (`npm run hooks`), release tags, and offline `git bundle` backups
+- [x] T25 Server-side protection for `main`: GitHub ruleset "protect-main" (no force-push, no deletion), verified by a rejected force-push. Also on: private vulnerability reporting, secret scanning + push protection, Dependabot alerts and security fixes

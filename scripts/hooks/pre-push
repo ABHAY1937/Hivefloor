@@ -1,6 +1,6 @@
 #!/bin/sh
-# Hivefloor pre-push guard (installed by `npm run hooks`). GitHub Free can't
-# protect branches on a private repo, so this protects main from this machine:
+# Hivefloor pre-push guard (installed by `npm run hooks`). GitHub's ruleset
+# "protect-main" enforces this server-side; this catches it earlier, locally:
 #   - refuses force-pushes (history rewrites) and deletion of main
 #   - runs the typecheck and tests before main is pushed
 # Deliberate override for a one-off: git push --no-verify
