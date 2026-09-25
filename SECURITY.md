@@ -3,8 +3,8 @@
 
 ## Reporting a vulnerability
 
-Please don't open a public issue. Use GitHub's **Report a vulnerability** (private
-advisory) on this repository. We aim to acknowledge reports within 3 business days.
+Hivefloor is internal software. Report vulnerabilities privately to the owner
+(GitHub: @ABHAY1937), not in an issue or a shared channel.
 
 ## Security model (summary)
 

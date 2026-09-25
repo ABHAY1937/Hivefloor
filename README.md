@@ -117,7 +117,7 @@ bin/hive(.cmd/.ps1)     CLI shims
 
 ## License
 
-[MIT](./LICENSE) © 2026 Abhay. Third-party components and prior art are credited in
-[THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md). The license covers the code, not
-the "Hivefloor" name or logo. Contributions are accepted under the same license with a
-DCO sign-off (see [CONTRIBUTING.md](./CONTRIBUTING.md)).
+Proprietary and confidential. © 2026 Abhay, all rights reserved (see [LICENSE](./LICENSE)).
+Internal use only; not for distribution. Third-party components and prior art are
+credited in [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md). Contributors need a
+written agreement with the owner (see [CONTRIBUTING.md](./CONTRIBUTING.md)).

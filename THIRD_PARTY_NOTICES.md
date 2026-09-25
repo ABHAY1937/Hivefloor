@@ -1,7 +1,8 @@
 # Third-party notices
 
-Hivefloor is licensed under the MIT License (see [LICENSE](LICENSE)). It builds on
-the open-source work below. Each component keeps its own license.
+Hivefloor is proprietary software, © 2026 Abhay, all rights reserved (see [LICENSE](LICENSE)).
+It uses the open-source work below. Each component keeps its own license, and all of
+them permit use in proprietary software as long as their notices are kept.
 
 ## Prior art: munder-difflin
 
@@ -48,6 +49,5 @@ their model APIs is governed by their own terms.
 
 ## Trademarks
 
-The MIT License covers the code only. "Hivefloor" and its logo are not licensed under
-it. Forks must use a different name for distributed builds. All other product names
-are trademarks of their respective owners.
+"Hivefloor" and its logo belong to the copyright holder. All other product names are
+trademarks of their respective owners.
