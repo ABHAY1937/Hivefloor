@@ -34,9 +34,21 @@ async function rpc(method, params = {}) {
 
 // ─── tools ──────────────────────────────────────────────────────────────────
 
+// Contain file tools to the working directory. A plain startsWith() check lets
+// "../app-secrets" through when CWD is ".../app", and symlinks can point anywhere,
+// so compare real paths with path.relative().
+const ROOT = fs.realpathSync(CWD);
+const inside = (full) => {
+  const rel = path.relative(ROOT, full);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+};
 const safePath = (p) => {
-  const full = path.resolve(CWD, p || '.');
-  if (!full.startsWith(path.resolve(CWD))) throw new Error('path escapes the working directory');
+  const full = path.resolve(ROOT, p || '.');
+  if (!inside(full)) throw new Error('path escapes the working directory');
+  // Resolve symlinks on the deepest existing ancestor (the target may not exist yet).
+  let probe = full;
+  while (!fs.existsSync(probe) && path.dirname(probe) !== probe) probe = path.dirname(probe);
+  if (!inside(fs.realpathSync(probe))) throw new Error('path escapes the working directory (symlink)');
   return full;
 };
 

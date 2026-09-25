@@ -29,6 +29,9 @@ import { clip, slug } from './util';
 
 const pexec = promisify(execFile);
 
+const AGENT_SETTABLE_STATUS = new Set<AgentStatus>(['working', 'idle', 'blocked']);
+const APPROVAL_KINDS = new Set<ApprovalKind>(['spend', 'delete', 'big-change', 'external', 'other']);
+
 export interface HarnessOptions {
   home: string;
   /** Directory with bundled agent scripts (sim-agent.cjs, llm-agent.cjs, hive-cli.cjs). */
@@ -429,7 +432,13 @@ export class Harness {
       case 'task.claim':
         return hive.claimTask(need('id'), agent);
       case 'task.done': {
-        const t = hive.updateTask(need('id'), { status: p.failed ? 'failed' : 'done', result: s('result') ?? '' });
+        const cur = hive.listTasks().find((x) => x.id === need('id'));
+        if (!cur) throw new Error(`no task ${need('id')}`);
+        // Only the assignee, the creator, or the boss may close a task.
+        if (cur.assignee !== agent && cur.createdBy !== agent && hive.boss()?.id !== agent) {
+          throw new Error(`task ${cur.id} is not yours to close`);
+        }
+        const t = hive.updateTask(cur.id, { status: p.failed ? 'failed' : 'done', result: s('result') ?? '' });
         const creator = t.createdBy;
         if (creator && creator !== agent && (hive.getAgent(creator) || creator === HUMAN)) {
           hive.send({ from: agent, to: creator, act: 'done', subject: `Done: ${t.title}`, body: t.result ?? '' });
@@ -440,6 +449,9 @@ export class Harness {
       }
       case 'status': {
         const st = (s('status') ?? 'working') as AgentStatus;
+        // 'waiting' is reserved for real pending approvals; agents can't fake it.
+        const hasPending = st === 'waiting' && hive.listApprovals('pending').some((a) => a.agent === agent);
+        if (!AGENT_SETTABLE_STATUS.has(st) && !hasPending) throw new Error(`status must be one of: ${[...AGENT_SETTABLE_STATUS].join(', ')} ('waiting' only while you have a pending approval)`);
         const station: Station = st === 'waiting' ? 'boss-door' : st === 'blocked' ? 'whiteboard' : st === 'idle' ? 'coffee' : /test|build|deploy|ci\b/i.test(s('note') ?? '') ? 'server' : 'desk';
         this.explicitStatusUntil.set(agent, Date.now() + 20_000);
         this.setState(agent, { status: st, note: clip(s('note') ?? '', 120), station });
@@ -452,24 +464,34 @@ export class Harness {
         this.pulse(agent, undefined, 'updating the plan', 'whiteboard');
         return hive.getBoard();
       case 'board.set':
+        // Workers append; only the boss may replace the shared plan wholesale.
+        if (hive.boss()?.id !== agent) throw new Error('only the boss can replace the board; use hive board --append');
         hive.setBoard(need('text'), agent);
         return hive.getBoard();
-      case 'lease':
-        return hive.acquireLeases(agent, (p.paths as string[]) ?? [], Number(p.ttlMs ?? 600_000));
+      case 'lease': {
+        const paths = Array.isArray(p.paths) ? p.paths.map(String).filter(Boolean) : [];
+        if (!paths.length) throw new Error('lease needs at least one path');
+        const ttl = Number(p.ttlMs ?? 600_000);
+        return hive.acquireLeases(agent, paths, Number.isFinite(ttl) ? Math.min(Math.max(ttl, 10_000), 4 * 3_600_000) : 600_000);
+      }
       case 'release':
-        return { released: hive.releaseLeases(agent, p.paths as string[] | undefined) };
+        return { released: hive.releaseLeases(agent, Array.isArray(p.paths) ? p.paths.map(String) : undefined) };
       case 'leases':
         return hive.listLeases();
       case 'check': {
         const verdict = hive.policy.classify(need('text'), { filesTouched: Number(p.files ?? 0) });
         const task = s('task') ? hive.listTasks().find((t) => t.id === s('task')) : undefined;
-        if (verdict.needsApproval && task?.approval && task.assignee === agent && hive.getApproval(task.approval)?.status === 'approved') {
-          return { needsApproval: false, kind: verdict.kind, reason: `pre-approved by the human (${task.approval})`, approval: task.approval };
+        const ap = task?.approval ? hive.getApproval(task.approval) : undefined;
+        // A task's approval only covers the kind of risk the human approved: a yes to
+        // "spend $20 on a domain" must not also green-light `rm -rf` or a prod deploy.
+        if (verdict.needsApproval && ap && task!.assignee === agent && ap.status === 'approved' && (ap.kind === verdict.kind || ap.kind === 'other')) {
+          return { needsApproval: false, kind: verdict.kind, reason: `pre-approved by the human (${ap.id})`, approval: ap.id };
         }
         return verdict;
       }
       case 'ask': {
         const kind = (s('kind') ?? 'other') as ApprovalKind;
+        if (!APPROVAL_KINDS.has(kind)) throw new Error(`kind must be one of: ${[...APPROVAL_KINDS].join(', ')}`);
         const a = hive.requestApproval(agent, kind, need('summary'), s('detail') ?? '');
         const wait = Number(p.waitMs ?? 0);
         if (wait > 0) {
@@ -491,8 +513,11 @@ export class Harness {
         }
         return a;
       }
-      case 'approval':
-        return hive.getApproval(need('id'));
+      case 'approval': {
+        const a = hive.getApproval(need('id'));
+        if (!a || (a.agent !== agent && hive.boss()?.id !== agent)) throw new Error('no such approval');
+        return a;
+      }
       case 'route':
         return this.route(need('task')).slice(0, 5);
       case 'hook.stop': {

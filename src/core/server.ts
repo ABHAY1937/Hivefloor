@@ -56,25 +56,38 @@ export class ControlServer {
       res.writeHead(code, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(s) });
       res.end(s);
     };
+    // DNS-rebinding guard: a browser tab pointed at an attacker hostname that resolves
+    // to 127.0.0.1 carries that hostname in Host. Agents always use 127.0.0.1:<port>.
+    const host = req.headers.host ?? '';
+    if (host !== `127.0.0.1:${this.port}` && host !== `localhost:${this.port}`) return send(403, { error: 'bad host' });
     if (req.method === 'GET' && req.url === '/health') return send(200, { ok: true });
     if (req.method !== 'POST' || req.url !== '/rpc') return send(404, { error: 'not found' });
     const auth = req.headers.authorization ?? '';
     const agent = this.tokens.get(auth.replace(/^Bearer\s+/i, ''));
     if (!agent) return send(401, { error: 'invalid hive token' });
-    let raw = '';
-    for await (const chunk of req) {
-      raw += chunk;
-      if (raw.length > 2_000_000) return send(413, { error: 'payload too large' });
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    for await (const chunk of req as AsyncIterable<Buffer>) {
+      bytes += chunk.length;
+      if (bytes > 2_000_000) {
+        send(413, { error: 'payload too large' });
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
     }
+    const raw = Buffer.concat(chunks).toString('utf8');
     let body: { method?: string; params?: Record<string, unknown> };
     try {
       body = JSON.parse(raw || '{}');
     } catch {
       return send(400, { error: 'bad json' });
     }
-    if (!body.method) return send(400, { error: 'missing method' });
+    if (!body || typeof body.method !== 'string') return send(400, { error: 'missing method' });
+    const params = body.params ?? {};
+    if (typeof params !== 'object' || Array.isArray(params)) return send(400, { error: 'params must be an object' });
     try {
-      const result = await this.handler(agent, body.method, body.params ?? {});
+      const result = await this.handler(agent, body.method, params);
       send(200, { ok: true, result });
     } catch (e) {
       send(400, { ok: false, error: e instanceof Error ? e.message : String(e) });

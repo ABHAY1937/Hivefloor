@@ -36,19 +36,27 @@ interface Rule {
 
 const RULES: Rule[] = [
   // Destructive operations
-  { kind: 'delete', re: /\brm\s+(-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r)\b/i, reason: 'recursive force delete' },
-  { kind: 'delete', re: /\b(rmdir|rimraf|del\s+\/[sq]|remove-item\b.*-recurse)/i, reason: 'directory removal' },
+  // Any recursive rm, with the flags combined or split (`-rf`, `-r -f`, `--recursive`).
+  { kind: 'delete', re: /\brm\s+(?:-{1,2}\S+\s+)*(?:-[a-z]*r[a-z]*|--recursive)\b/i, reason: 'recursive delete' },
+  { kind: 'delete', re: /\b(rmdir|rimraf|rd\s+\/s|del\s+\/[sq]|remove-item\b.*-recurse)/i, reason: 'directory removal' },
+  { kind: 'delete', re: /\bfind\b.*\s(-delete|-exec\s+rm)\b/i, reason: 'bulk delete via find' },
   { kind: 'delete', re: /\b(drop\s+(table|database|schema)|truncate\s+table)\b/i, reason: 'destructive SQL' },
   { kind: 'delete', re: /\bdelete\s+from\s+\w+\s*(;|$)/i, reason: 'unscoped SQL delete' },
-  { kind: 'delete', re: /\bgit\s+(push\s+.*(--force|-f)\b|reset\s+--hard|clean\s+-[a-z]*f|branch\s+-D)/i, reason: 'history-destroying git op' },
-  { kind: 'delete', re: /\b(mkfs|format\s+[a-z]:|dd\s+if=)/i, reason: 'disk-level operation' },
+  { kind: 'delete', re: /\bgit\s+(push\s+.*(--force|-f\b|\s\+[\w/.-])|reset\s+--hard|clean\s+-[a-z]*f|branch\s+-D|filter-branch|filter-repo)/i, reason: 'history-destroying git op' },
+  { kind: 'delete', re: /\b(mkfs|format\s+[a-z]:|dd\s+if=|diskpart|shred\b)/i, reason: 'disk-level operation' },
+  {
+    kind: 'delete',
+    re: /\b(kubectl\s+delete|terraform\s+destroy|pulumi\s+destroy|helm\s+(uninstall|delete)|docker\s+(system|volume|image)\s+prune|aws\s+s3\s+(rm|rb)\b|gcloud\b.*\sdelete\b|az\b.*\sdelete\b)/i,
+    reason: 'deleting cloud or cluster resources'
+  },
   { kind: 'delete', re: /\b(delete|destroy|wipe|purge)\b.{0,40}\b(prod|production|bucket|database|repo|cluster|all)\b/i, reason: 'deleting a shared resource' },
   // Spend
   { kind: 'spend', re: /\$\s?\d|\b\d+(\.\d+)?\s?(usd|dollars|eur|aed)\b/i, reason: 'mentions money' },
   { kind: 'spend', re: /\b(purchase|buy|subscribe|upgrade\s+(the\s+)?plan|billing|credit\s+card|invoice|pay\s+for)\b/i, reason: 'spending money' },
   { kind: 'spend', re: /\b(provision|scale\s+up|launch)\b.{0,30}\b(gpu|instance|cluster|vm|node)s?\b/i, reason: 'provisioning paid infrastructure' },
   // Big changes
-  { kind: 'big-change', re: /\b(npm|pnpm|yarn|cargo|twine|gem)\s+publish\b/i, reason: 'publishing a package' },
+  { kind: 'big-change', re: /\b(npm|pnpm|yarn|cargo|twine|gem)\s+publish\b|\bgh\s+release\s+create\b/i, reason: 'publishing a package or release' },
+  { kind: 'big-change', re: /\b(terraform\s+apply|pulumi\s+up|kubectl\s+apply\b.*\b(prod|production)\b)/i, reason: 'applying infrastructure changes' },
   { kind: 'big-change', re: /\bgit\s+push\b.*\b(main|master|release)\b/i, reason: 'pushing to a protected branch' },
   { kind: 'big-change', re: /\b(deploy|release)\b.{0,20}\b(prod|production|live)\b/i, reason: 'production deploy' },
   { kind: 'big-change', re: /\b(rewrite|re-architect|migrate)\b.{0,30}\b(entire|whole|all|codebase|database|schema)\b/i, reason: 'large-scale rewrite or migration' },
@@ -92,9 +100,10 @@ export class ApprovalPolicy {
 }
 
 function maxDollarAmount(text: string): number | null {
-  const m = [...text.matchAll(/\$\s?(\d+(?:[.,]\d+)?)|(\d+(?:\.\d+)?)\s?(?:usd|dollars)/gi)];
+  // Thousands separators count: "$1,200,000" is 1.2M, not 1.2.
+  const m = [...text.matchAll(/\$\s?(\d[\d,]*(?:\.\d+)?)|(\d[\d,]*(?:\.\d+)?)\s?(?:usd|dollars)/gi)];
   if (m.length === 0) return null;
-  return Math.max(...m.map((x) => parseFloat((x[1] ?? x[2]).replace(',', ''))));
+  return Math.max(...m.map((x) => parseFloat((x[1] ?? x[2]).replace(/,/g, ''))));
 }
 
 const reCache = new Map<string, RegExp | null>();
