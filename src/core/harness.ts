@@ -18,7 +18,7 @@ import {
   DEFAULT_SANDBOX_IMAGE,
   bridgeGateway,
   buildDockerLaunch,
-  dockerAvailable,
+  checkDocker,
   ensureImage,
   homeLabel,
   hostUrl,
@@ -372,7 +372,7 @@ export class Harness {
   }
 
   private async prepareSandbox(spec: AgentSpec): Promise<void> {
-    if (!(await dockerAvailable())) throw new Error('Docker is not running — start Docker Desktop (or Docker Engine) to use the sandbox');
+    await checkDocker();
     const sandboxDir = this.opts.sandboxDir ?? join(this.opts.agentsDir, '..', 'sandbox');
     await ensureImage(spec.sandboxImage || DEFAULT_SANDBOX_IMAGE, sandboxDir, (s) => {
       this.setState(spec.id, { note: s });

@@ -72,8 +72,8 @@ test('loopback model URLs are rewritten for containers', () => {
 function dockerUp(): boolean {
   if (process.env.HIVEFLOOR_DOCKER_TESTS === '0') return false;
   try {
-    execFileSync('docker', ['version', '--format', '{{.Server.Version}}'], { stdio: 'pipe', timeout: 15_000 });
-    return true;
+    // Windows CI runners have Docker in Windows-containers mode, which can't run the Linux sandbox.
+    return execFileSync('docker', ['version', '--format', '{{.Server.Os}}'], { encoding: 'utf8', stdio: 'pipe', timeout: 15_000 }).trim() === 'linux';
   } catch {
     return false;
   }
@@ -81,7 +81,7 @@ function dockerUp(): boolean {
 
 const IMAGE = 'node:24-bookworm-slim';
 
-test('integration: a sandboxed agent works through the hive but is walled off from the host', { skip: !dockerUp() && 'Docker not available', timeout: 300_000 }, async () => {
+test('integration: a sandboxed agent works through the hive but is walled off from the host', { skip: !dockerUp() && 'Docker (Linux containers) not available', timeout: 300_000 }, async () => {
   execFileSync('docker', ['pull', '-q', IMAGE], { stdio: 'pipe', timeout: 240_000 });
   const home = mkdtempSync(join(tmpdir(), 'hf-box-'));
   const work = mkdtempSync(join(tmpdir(), 'hf-work-'));

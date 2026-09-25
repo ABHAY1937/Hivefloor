@@ -110,12 +110,16 @@ export function homeLabel(home: string): string {
   return createHash('sha256').update(home).digest('hex').slice(0, 12);
 }
 
-export async function dockerAvailable(): Promise<boolean> {
+/** Throws a user-facing reason when the sandbox can't run: no daemon, or Windows-containers mode. */
+export async function checkDocker(): Promise<void> {
+  let os: string;
   try {
-    await pexec('docker', ['version', '--format', '{{.Server.Version}}'], { timeout: 10_000 });
-    return true;
+    ({ stdout: os } = await pexec('docker', ['version', '--format', '{{.Server.Os}}'], { timeout: 10_000 }));
   } catch {
-    return false;
+    throw new Error('Docker is not running — start Docker Desktop (or Docker Engine) to use the sandbox');
+  }
+  if (os.trim() !== 'linux') {
+    throw new Error(`Docker is in ${os.trim()}-containers mode; the sandbox needs Linux containers (Docker Desktop → Switch to Linux containers)`);
   }
 }
 
