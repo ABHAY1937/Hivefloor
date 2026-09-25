@@ -2,9 +2,30 @@
   "name": "hivefloor",
   "version": "0.1.0",
   "private": true,
-  "description": "A local-first office of AI coding agents: real terminals, a router, shared memory, and a boss agent that only asks you for approvals.",
-  "main": "out/main/index.js",
+  "description": "Local-first desktop office for AI coding agents: real terminals, a boss agent that routes work, shared memory, and human approval for risky actions.",
+  "keywords": [
+    "ai-agents",
+    "multi-agent",
+    "claude-code",
+    "codex",
+    "gemini-cli",
+    "aider",
+    "electron",
+    "terminal",
+    "developer-tools",
+    "local-first"
+  ],
+  "homepage": "https://github.com/ABHAY1937/Hivefloor#readme",
+  "bugs": {
+    "url": "https://github.com/ABHAY1937/Hivefloor/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ABHAY1937/Hivefloor.git"
+  },
   "license": "MIT",
+  "author": "Abhay (https://github.com/ABHAY1937)",
+  "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
